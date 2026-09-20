@@ -59,12 +59,12 @@ function ring(value, size = 118) {
   const r = (size - 14) / 2, c = 2 * Math.PI * r, on = (Math.max(0, Math.min(100, value)) / 100) * c;
   const col = `var(--${band(value) === 'good' ? 'good' : band(value) === 'warn' ? 'warn' : 'bad'})`;
   return `<svg class="ring" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" role="img" aria-label="${value} out of 100">
-    <circle cx="${size/2}" cy="${size/2}" r="${r}" fill="none" stroke="var(--border)" stroke-width="9"/>
+    <circle cx="${size/2}" cy="${size/2}" r="${r}" fill="none" stroke="var(--rule)" stroke-width="9"/>
     <circle cx="${size/2}" cy="${size/2}" r="${r}" fill="none" stroke="${col}" stroke-width="9"
       stroke-linecap="round" stroke-dasharray="${on.toFixed(1)} ${(c - on).toFixed(1)}"
       transform="rotate(-90 ${size/2} ${size/2})"/>
     <text x="50%" y="50%" text-anchor="middle" dy=".35em" font-size="27" font-weight="700"
-      fill="var(--text)" font-family="var(--sans)">${Math.round(value)}</text>
+      fill="var(--ink)" font-family="var(--font-masthead)">${Math.round(value)}</text>
   </svg>`;
 }
 
@@ -114,7 +114,7 @@ function render(r) {
     <p class="req-why">${esc(r.role.summary)}</p>`;
   if (r.role.unstated_expectations?.length) {
     h += `<p class="ul-title">Unstated expectations it inferred</p>
-      <ul style="margin:4px 0 0;font-size:13.5px;color:var(--text-dim)">
+      <ul style="margin:4px 0 0;font-size:13.5px;color:var(--ink-dim)">
       ${r.role.unstated_expectations.map(u => `<li>${esc(u)}</li>`).join('')}</ul>`;
   }
   h += `</div>`;

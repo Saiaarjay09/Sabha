@@ -429,7 +429,9 @@ generator pops the record in its `finally` block, and `_drive()` sets
 proxies from dropping an idle stream.
 
 ### `council/static/index.html`
-The single page. Notable detail: an inline script runs *before* the stylesheet
+The single page. The header is a broadsheet masthead: a heavy/hairline rule
+pair, a letterspaced kicker, the wordmark, the Devanagari सभा, and an italic
+gloss of what the word means. Notable detail: an inline script runs *before* the stylesheet
 link and redirects to add a trailing slash if missing. Served under a path
 prefix, `styles.css` on `/council` resolves to `/styles.css` — a different
 service entirely — so the page would load unstyled. Normalising first prevents
@@ -437,11 +439,31 @@ the browser from ever requesting the wrong asset. The footer states the design,
 the bias handling, the privacy position and the limits in plain language.
 
 ### `council/static/styles.css`
-One stylesheet, no framework, no external fonts — the CSP forbids remote
-resources, and a hiring tool that leaks the visitor's IP to a font CDN while
-promising their CV never leaves the machine would be telling two different
-stories. Colours are CSS custom properties with a full dark-mode block; layout
-collapses to single column under 720px.
+One stylesheet, no framework, no external fonts. The CSP forbids remote
+resources, and that constraint is deliberate: a hiring tool that leaks the
+visitor's IP to a font CDN while promising their CV never leaves the machine
+would be telling two different stories. So the typography is built entirely
+from faces that ship with the operating system, chosen as a deliberate pairing
+rather than left to the browser default:
+
+| Token | Stack | Used for |
+|---|---|---|
+| `--font-masthead` | Didot → Bodoni 72 → Hoefler Text → Baskerville → Georgia | The wordmark and the two score gauges — large sizes only, because a high-contrast modern serif has hairline strokes that break up small |
+| `--font-display` | Iowan Old Style → Charter → Palatino → Georgia | Headings, verdicts, member names, body prose — a transitional serif that stays robust at mid sizes |
+| `--font-body` | system sans (`-apple-system` …) | Forms, dense metadata, small labels, where a sans is genuinely more legible |
+| `--mono` | system mono | Evidence ids, model names, rewritten-bullet examples |
+
+The design is broadsheet-editorial, which suits a tool whose output is a
+considered verdict: a warm newsprint palette (paper is never grey), oxblood
+rather than a saturated brand colour, 3px corners instead of pills, hairline
+rules doing the work that borders and drop shadows usually do, and
+letterspaced uppercase section labels. `font-variant-numeric: tabular-nums` is
+set globally so columns of scores line up. There is a full dark-mode block
+under `prefers-color-scheme`, and the layout collapses to a single column —
+including the two-column colophon footer — below 760px.
+
+`--sans` is kept as an alias because `app.js` references it inside generated
+inline SVG.
 
 ### `council/static/app.js`
 The client. Computes `BASE` from `location.pathname` so every request works
