@@ -477,7 +477,10 @@ each member's raw scores and published bias, and the ATS checklist. All
 interpolated values pass through `esc()`.
 
 ### `deploy/com.hiringcouncil.server.plist`
-The launchd agent. `RunAtLoad` + `KeepAlive` mean it starts at login and
+The launchd agent, committed as a **template**: `__PYTHON__`, `__REPO_DIR__`
+and `__HOME__` are substituted by `install.sh` for the machine it runs on,
+rather than shipping one person's home directory in a public repository.
+Do not install this file directly. `RunAtLoad` + `KeepAlive` mean it starts at login and
 restarts on crash. It binds uvicorn to `127.0.0.1` on purpose — the tunnel is
 what makes the service public, and binding `0.0.0.0` would additionally expose
 it to the whole local network. One worker, because the council saturates the GPU
@@ -485,7 +488,8 @@ on a single run and extra workers would queue behind each other while
 multiplying resident model memory.
 
 ### `deploy/install.sh`
-Idempotent installer: copies the plist, bootstraps the service, waits for
+Idempotent installer: resolves `python3` from `PATH` and the repo root from its
+own location, substitutes those into the plist template, bootstraps the service, waits for
 `/api/health`, then publishes the path on the tunnel. It also checks whether
 Ollama is registered as a login item and warns if not — otherwise the site
 returns errors after a reboot.

@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
+<!-- Template. install.sh substitutes __PYTHON__, __REPO_DIR__ and
+     __HOME__ for this machine; do not install this file directly. -->
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
@@ -6,7 +8,7 @@
     <string>com.hiringcouncil.server</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/Library/Frameworks/Python.framework/Versions/3.14/bin/python3</string>
+        <string>__PYTHON__</string>
         <string>-m</string>
         <string>uvicorn</string>
         <string>council.server:app</string>
@@ -26,7 +28,7 @@
         <string>75</string>
     </array>
     <key>WorkingDirectory</key>
-    <string>/Users/saideep/Developer/hiring-council</string>
+    <string>__REPO_DIR__</string>
     <key>EnvironmentVariables</key>
     <dict>
         <key>COUNCIL_OLLAMA_HOST</key>
@@ -43,8 +45,8 @@
     <key>KeepAlive</key>
     <true/>
     <key>StandardOutPath</key>
-    <string>/Users/saideep/Library/Logs/HiringCouncil/server.log</string>
+    <string>__HOME__/Library/Logs/Sabha/server.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/saideep/Library/Logs/HiringCouncil/server.err</string>
+    <string>__HOME__/Library/Logs/Sabha/server.err</string>
 </dict>
 </plist>

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Install the Hiring Council as a permanent service on this Mac.
+# Install Sabha as a permanent service on this Mac.
 #
 #   1. a launchd agent that starts the server at login and restarts it if it dies
 #   2. a Tailscale Funnel path that publishes it on the existing hostname
@@ -14,8 +14,18 @@ SRC="$(cd "$(dirname "$0")" && pwd)/$LABEL.plist"
 PORT=8700
 PATH_PREFIX=/council
 
-mkdir -p "$HOME/Library/Logs/HiringCouncil"
-cp "$SRC" "$PLIST"
+REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+PYTHON="$(command -v python3)"
+[ -z "$PYTHON" ] && { echo "python3 not found on PATH"; exit 1; }
+
+mkdir -p "$HOME/Library/Logs/Sabha"
+
+# The committed plist is a template — substitute this machine's paths rather
+# than shipping one person's home directory in a public repository.
+sed -e "s|__PYTHON__|$PYTHON|g" \
+    -e "s|__REPO_DIR__|$REPO_DIR|g" \
+    -e "s|__HOME__|$HOME|g" \
+    "$SRC" > "$PLIST"
 
 launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null
 launchctl bootstrap "gui/$(id -u)" "$PLIST" || { echo "launchctl bootstrap failed"; exit 1; }
