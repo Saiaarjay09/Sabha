@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.hiringcouncil.server</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Library/Frameworks/Python.framework/Versions/3.14/bin/python3</string>
+        <string>-m</string>
+        <string>uvicorn</string>
+        <string>council.server:app</string>
+        <!-- Bound to loopback on purpose. Tailscale Funnel is what puts this
+             on the internet, and it proxies from localhost. Binding 0.0.0.0
+             would additionally expose it to the whole local network. -->
+        <string>--host</string>
+        <string>127.0.0.1</string>
+        <string>--port</string>
+        <string>8700</string>
+        <!-- One worker. The council saturates the GPU on a single run, so
+             extra workers would queue behind each other anyway while
+             multiplying the memory held by loaded models. -->
+        <string>--workers</string>
+        <string>1</string>
+        <string>--timeout-keep-alive</string>
+        <string>75</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>/Users/saideep/Developer/hiring-council</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>COUNCIL_OLLAMA_HOST</key>
+        <string>http://127.0.0.1:11434</string>
+        <key>COUNCIL_CONCURRENCY</key>
+        <string>3</string>
+        <key>COUNCIL_RATE_LIMIT_PER_HOUR</key>
+        <string>12</string>
+        <key>PYTHONUNBUFFERED</key>
+        <string>1</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/Users/saideep/Library/Logs/HiringCouncil/server.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/saideep/Library/Logs/HiringCouncil/server.err</string>
+</dict>
+</plist>

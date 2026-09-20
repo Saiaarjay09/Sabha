@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sabha — Hiring Council</title>
+<script>
+/* Served under a path prefix on a shared Tailscale hostname. Without a
+   trailing slash, "styles.css" resolves one level up and lands on a different
+   service entirely, so the page loads unstyled. Normalise before the browser
+   requests a single asset. */
+if (!location.pathname.endsWith('/')) {
+  location.replace(location.pathname + '/' + location.search + location.hash);
+}
+</script>
+<meta name="description" content="A panel of deliberately biased AI assessors reads your CV against a specific job and argues about it.">
+<link rel="stylesheet" href="styles.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⚖️</text></svg>">
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="brand">
+    <h1>Sabha</h1>
+    <span class="pill">7 assessors · runs locally</span>
+  </div>
+  <p class="tagline">
+    A hiring council. Paste a job and your CV, and seven AI assessors with
+    deliberately different biases read it, judge every requirement against what you can actually
+    evidence, and argue. You get a score, a match percentage, and the specific
+    reasons for both.
+  </p>
+</header>
+
+<form id="form">
+  <div class="card">
+    <h2>The job</h2>
+    <div class="field">
+      <label for="job_title">Job title you're applying for</label>
+      <input type="text" id="job_title" name="job_title" placeholder="Senior Platform Engineer" autocomplete="off">
+    </div>
+    <div class="field">
+      <label for="job_description">Job description</label>
+      <p class="hint">Paste the whole posting. The more of it there is, the less the council has to guess about what the role really needs.</p>
+      <textarea id="job_description" name="job_description" placeholder="Paste the full job advert here…"></textarea>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Your CV</h2>
+    <div class="grid2">
+      <div class="field">
+        <label for="ats_cv_file">ATS CV</label>
+        <p class="hint">The version you actually submit. Judged for machine-readability as well as content.</p>
+        <input type="file" id="ats_cv_file" name="ats_cv_file" accept=".pdf,.docx,.txt,.md">
+        <p class="or">or paste it</p>
+        <textarea id="ats_cv_text" name="ats_cv_text" placeholder="Paste your ATS CV text…"></textarea>
+      </div>
+      <div class="field">
+        <label for="exec_cv_file">Executive CV <span style="font-weight:400;color:var(--text-faint)">— optional</span></label>
+        <p class="hint">Your narrative or leadership version. Read by the assessors who judge scope, ownership and story.</p>
+        <input type="file" id="exec_cv_file" name="exec_cv_file" accept=".pdf,.docx,.txt,.md">
+        <p class="or">or paste it</p>
+        <textarea id="exec_cv_text" name="exec_cv_text" placeholder="Paste your executive CV text…"></textarea>
+      </div>
+    </div>
+  </div>
+
+  <div class="actions">
+    <button type="submit" class="primary" id="go">Convene the council</button>
+    <span class="note">Takes 5–7 minutes — seven assessors, all running on this machine. Nothing you paste is stored or sent anywhere.</span>
+  </div>
+</form>
+
+<div class="card" id="progress" style="margin-top:18px">
+  <h2>Deliberating</h2>
+  <div class="chips" id="chips"></div>
+  <div class="log" id="log"></div>
+</div>
+
+<div id="results"></div>
+
+<footer>
+  <p><b>How this works.</b> The job is decomposed into atomic requirements
+  before your CV is read at all — each one carrying what would prove it and
+  which adjacent experience counts instead. Your CV is then indexed into
+  citable evidence, and every requirement is judged against it by two
+  independently-trained models. Only then does the council score you. Nothing
+  compares keywords.</p>
+  <p><b>Bias is the design.</b> Each assessor is built to lean a particular
+  way, and each one's known lean is measured and subtracted before the panel is
+  pooled. The offsets are declared tuning parameters, not calibrations learned
+  from hiring outcomes — no-one tells this system who actually got hired.</p>
+  <p><b>Privacy.</b> Every model runs on the machine serving this page. Your CV
+  is held in memory for the length of the run and dropped when the result is
+  returned. It is never written to disk and never sent to any third party.</p>
+  <p><b>Limits.</b> This is a drafting aid, not a hiring decision and not a
+  prediction of what any real employer will do. Treat the score as a structured
+  second opinion.</p>
+</footer>
+
+</div>
+<script src="app.js"></script>
+</body>
+</html>
