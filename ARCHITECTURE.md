@@ -7,6 +7,30 @@ It is written to be read start to finish by someone who has never seen the code.
 
 ---
 
+## Live instance
+
+**https://haven.taila6d3cb.ts.net/council/**
+
+Paste a job description and a CV and the council will assess it. Expect it to
+take five to seven minutes: seven assessors and a two-model matching pass all
+run locally on the machine serving the page, and the page streams their
+progress while you wait.
+
+Two things worth knowing before you click:
+
+- **It is served from a single Mac over a Tailscale Funnel**, not from cloud
+  infrastructure. If that machine is off or asleep, the link will not resolve.
+  That is a property of the deployment, not an outage.
+- **Nothing you paste is stored.** The CV is held in memory for the life of the
+  run and dropped when the result is returned — never written to disk, never
+  sent to a third party. Every model runs on the machine serving the page. See
+  §5 `council/server.py` for where that is enforced in code.
+
+There is a per-IP rate limit of twelve analyses an hour and a ceiling of two
+concurrent runs, because each analysis costs real GPU time on one laptop.
+
+---
+
 ## 1. What this is, in one paragraph
 
 Sabha takes a job description and a CV and returns two numbers — a **score out
