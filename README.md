@@ -17,11 +17,12 @@ machine and is never written to disk.
 
 Paste a job description and a CV. Nothing you paste is stored.
 
-Runtime varies more than a single figure suggests: about **6–8 minutes** when
-the models are already resident, and longer — occasionally past fifteen — when
-a model has to load first, a member times out and is retried, or something else
-is using the GPU. The page streams each assessor's progress so the wait is
-legible rather than a blank spinner.
+Runtime varies far more than a single figure suggests. Measured runs that
+completed with the full panel have ranged from **6 to 11 minutes**, and a run
+that loses a member to a timeout and retries it can pass fifteen. The variance
+is dominated by what the GPU already has resident, not by the length of your
+CV. The page streams each assessor's progress so the wait is legible rather
+than a blank spinner.
 
 It is served from a single Mac over a Tailscale Funnel rather than cloud
 infrastructure, so if the link does not resolve, that machine is asleep — it

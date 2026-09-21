@@ -15,11 +15,12 @@ Paste a job description and a CV and the council will assess it. Seven
 assessors and a two-model matching pass all run locally on the machine serving
 the page.
 
-Runtime varies more than a single figure suggests: about **6–8 minutes** when
-the models are already resident, and longer — occasionally past fifteen — when
-a model has to load first, a member times out and is retried, or something else
-is using the GPU. The page streams each assessor's progress so the wait is
-legible rather than a blank spinner.
+Runtime varies far more than a single figure suggests. Measured runs that
+completed with the full panel have ranged from **6 to 11 minutes**, and a run
+that loses a member to a timeout and retries it can pass fifteen. The variance
+is dominated by what the GPU already has resident, not by the length of your
+CV. The page streams each assessor's progress so the wait is legible rather
+than a blank spinner.
 
 Two things worth knowing before you click:
 
@@ -577,8 +578,10 @@ All environment variables are prefixed `COUNCIL_`:
 
 ## 7. Known limitations
 
-- **It is slow**: 6–8 minutes with models resident, longer on a cold start or
-  after a retry. Every run appends its stage timings to a local log (see
+- **It is slow**: 6–11 minutes measured, longer on a cold start or after a
+  retry. On one instrumented run the council was 51% of the time, synthesis
+  25%, requirement matching 17% and job analysis 7%; the deterministic stages
+  (CV indexing, the ATS audit, all the scoring maths) cost 0.0s. Every run appends its stage timings to a local log (see
   `council/timings.py`); `analyse_timings.py` summarises where the time went.
 - **The offsets are declared, not learned.** Nothing tells this system who
   actually got hired, so there is no ground truth to calibrate against. They
