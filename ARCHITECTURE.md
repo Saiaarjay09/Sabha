@@ -442,12 +442,28 @@ weight_r = CRITICALITY_WEIGHT[criticality]    # must 3, strong 2, nice 1
 raw      = 100 × Σ(credit_r × weight_r) / Σ(weight_r)
 ```
 
-Then **the gate**, which is the part that makes this behave like real hiring:
-one unevidenced must-have caps the result at **65%**, two or more cap it at
-**45% − 3×(n−2)**. Averaging alone would let four satisfied nice-to-haves paper
-over a missing must-have. The uncapped figure and the reason for the cap are
-both returned and shown, e.g. *"coverage was 73% but is capped at 65% because a
-must-have is unevidenced."*
+Then **the gate**, which is the part that makes this behave like real hiring.
+Averaging alone would let four satisfied nice-to-haves paper over a missing
+must-have, so one unevidenced must-have pulls the result toward a **65%**
+ceiling and two or more toward **45% − 3×(n−2)**.
+
+The ceiling is *approached*, not clamped to: `ceiling + (raw − ceiling) × 0.3`.
+The original hard `min()` produced a plateau where every gated run reported
+exactly 65.0, so the number stopped discriminating — a candidate covering 90%
+of everything else was indistinguishable from one covering 70%. The soft
+landing keeps the penalty dominant while remaining monotonic in coverage
+(`test_gate_has_no_plateau`). The uncapped figure and the reason are both
+returned and shown.
+
+> **The instability this exposed.** A single requirement moving between "must"
+> and "strong" flips the gate, and the job decomposition was running at
+> temperature 0.2 — so the same job description produced five must-haves on one
+> run and six on the next, and the same CV scored 78% then 65% with nothing
+> changed. An A/B against the pre-optimisation code confirmed both versions did
+> this; it was never a regression, it was the rubric wobbling underneath the
+> measurement. Job decomposition and the primary requirement matcher now run at
+> temperature 0. Verified: three consecutive analyses of the same posting
+> returned an identical rubric, 11 requirements and 5 must-haves each time.
 
 **Consensus and confidence.** `consensus()` is the standard deviation of
 bias-corrected member overalls, mapped so ~18 points of spread reads as total
