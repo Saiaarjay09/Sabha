@@ -22,6 +22,7 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 
 let t0 = 0;
+let lastResult = null;   // the benchmark a re-scan is compared against
 
 function log(msg, isNow) {
   const el = document.createElement('div');
@@ -96,9 +97,38 @@ function render(r) {
     ${tag(vBand, r.verdict)}
     ${tag('muted', `confidence: ${r.confidence}`)}
     ${tag('muted', `panel agreement: ${Math.round(r.consensus)}%`)}
+    ${tag(r.ats.compliant ? 'good' : 'bad', r.ats.compliant ? 'ATS compliant' : 'not ATS compliant')}
     ${tag(band(r.ats.score), `ATS readability: ${r.ats.score}`)}
     ${tag('muted', `${r.elapsed_s}s`)}
   </div>`;
+
+  if (r.delta) {
+    const d = r.delta;
+    const arrow = (n) => n > 0 ? '▲' : n < 0 ? '▼' : '–';
+    const dband = (n) => n > 0 ? 'good' : n < 0 ? 'bad' : 'muted';
+    h += `<div class="card"><h2>What changed since the last scan</h2>
+      <div class="verdict-row">
+        ${tag(dband(d.score.change), `Score ${d.score.from} → ${d.score.to}  ${arrow(d.score.change)} ${Math.abs(d.score.change)}`)}
+        ${tag(dband(d.match_pct.change), `Match ${d.match_pct.from}% → ${d.match_pct.to}%  ${arrow(d.match_pct.change)} ${Math.abs(d.match_pct.change)}`)}
+        ${d.verdict.from !== d.verdict.to ? tag('info', `${d.verdict.from} → ${d.verdict.to}`) : tag('muted', `still ${esc(d.verdict.to)}`)}
+      </div>`;
+    if (d.requirements?.length) {
+      h += `<p class="hint">The job was not re-analysed — the previous scan's requirements were
+        reused, so these movements are comparable. Note that the models are not deterministic:
+        a requirement can shift a step between runs without anything having changed, so treat
+        small movements as noise and look at the ones you actually argued for.</p>`;
+      for (const q of d.requirements) {
+        h += `<div class="req"><div class="req-head">
+            ${tag(q.improved ? 'good' : 'bad', `${esc(q.from)} → ${esc(q.to)}`)}
+            <div class="req-text">${esc(q.text || q.id)}</div>
+            ${q.from_claim ? tag('warn', 'on your word') : tag('muted', 'from the CV')}
+          </div></div>`;
+      }
+    } else {
+      h += `<p class="hint">No requirement changed its verdict.</p>`;
+    }
+    h += `</div>`;
+  }
 
   if (r.summary) h += `<div class="card"><h2>Where you stand</h2><p class="sum">${esc(r.summary)}</p></div>`;
 
@@ -130,6 +160,7 @@ function render(r) {
         ${tag(kb, kl)}
         <div class="req-text">${esc(q.text || v.requirement_id)}</div>
         ${tag(cb, cl)}
+        ${v.from_claim ? tag('warn', 'unverified') : ''}
       </div>
       <p class="req-why">${esc(v.reasoning)}${v.gap ? ` <b>Gap:</b> ${esc(v.gap)}` : ''}</p>
       ${cites(v.evidence_ids)}
@@ -195,7 +226,14 @@ function render(r) {
 
   /* ats */
   h += `<div class="card"><h2>ATS checks — measured, not guessed</h2>
-    <p class="hint">These are mechanical checks run in plain code, not model opinions. They are reproducible: the same CV always produces the same result here.</p>`;
+    <div class="imp ${r.ats.compliant ? 'medium' : 'critical'}" style="margin-bottom:16px">
+      <h4>${tag(r.ats.compliant ? 'good' : 'bad', r.ats.compliant ? 'Compliant' : 'Not compliant')}
+        ${r.ats.compliant ? 'This CV should survive automated parsing' : 'An automated parser would mangle or drop part of this CV'}</h4>
+      ${r.ats.blockers?.length
+        ? `<p class="problem">Blocking: ${r.ats.blockers.map(esc).join(' · ')}. These are failures a parser cannot recover from, so they decide compliance regardless of the score above.</p>`
+        : `<p class="problem">No blocking failures. The score below still shows where it could read better.</p>`}
+    </div>
+    <p class="hint">These are mechanical checks run in plain code, not model opinions. They are reproducible: the same CV always produces the same result here. There is no published ATS standard to test against — this measures what is known to break real parsers.</p>`;
   for (const c of r.ats.checks || []) {
     const mark = c.status === 'pass' ? '✓' : c.status === 'warn' ? '!' : '✕';
     h += `<div class="check"><div class="mark ${esc(c.status)}">${mark}</div>
@@ -206,6 +244,20 @@ function render(r) {
     <div style="margin-top:8px">${(r.evidence || []).map(e => `<div class="ev">[${esc(e.id)}] ${esc(e.text)}</div>`).join('')}</div>
   </details></div>`;
 
+  h += `<div class="card"><h2>Reply to the council</h2>
+    <p class="hint">Disagree, or left something off your CV? Say so and it will re-scan,
+    reusing this scan's requirements as the benchmark so the two are comparable.
+    Anything you add here is treated as <b>your word, not evidence</b> — it is cited
+    separately, can never count as fully demonstrated, and is labelled in the result.</p>
+    <div class="field">
+      <textarea id="claims" placeholder="One point per line. For example:&#10;I did use Terraform at Ravelin — it is not on the CV because the project was internal.&#10;The migration was 400 services, not 240."></textarea>
+    </div>
+    <div class="actions">
+      <button type="button" class="primary" id="rescan">Re-scan with this</button>
+      <span class="note">Faster than the first run: the job is not re-analysed.</span>
+    </div>
+  </div>`;
+
   if (r.notes?.length) {
     h += `<div class="notes"><b>Run notes</b><ul>${r.notes.map(n => `<li>${esc(n)}</li>`).join('')}</ul></div>`;
   }
@@ -214,17 +266,44 @@ function render(r) {
   results.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
-form.addEventListener('submit', async (e) => {
-  e.preventDefault();
+/* Only the fields the delta needs go back to the server. The full result
+   carries the evidence index, which is the CV text — there is no reason to
+   send that back over the wire a second time to compute a comparison. */
+function benchmark(r) {
+  if (!r) return null;
+  return {
+    score: r.score,
+    match_pct: r.match_pct,
+    verdict: r.verdict,
+    requirements: (r.requirements || []).map(v => ({ requirement_id: v.requirement_id, coverage: v.coverage })),
+    role: {
+      // The weights are part of the rubric, not decoration: a re-scan must be
+      // judged on the same axes as the scan it is being compared against.
+      dimension_weights: r.role?.dimension_weights || {},
+      seniority: r.role?.seniority,
+      title: r.role?.title,
+      summary: r.role?.summary,
+      requirements: (r.role?.requirements || []).map(q => ({
+        id: q.id, text: q.text, criticality: q.criticality,
+        category: q.category, proof: q.proof, proxies: q.proxies,
+      })),
+    },
+  };
+}
+
+async function startRun(extra = {}) {
   go.disabled = true;
   go.textContent = 'Deliberating…';
   results.innerHTML = '';
   logEl.innerHTML = '';
   resetChips();
   progress.classList.add('on');
+  progress.scrollIntoView({ behavior: 'smooth', block: 'center' });
   t0 = Date.now();
 
   const fd = new FormData(form);
+  if (extra.claims) fd.set('claims', extra.claims);
+  if (extra.prior) fd.set('prior', JSON.stringify(extra.prior));
   let runId;
   try {
     const res = await fetch(BASE + 'api/analyze', { method: 'POST', body: fd });
@@ -270,6 +349,11 @@ form.addEventListener('submit', async (e) => {
     es.close();
     fail('Lost the connection to the council.');
   };
+}
+
+form.addEventListener('submit', (e) => {
+  e.preventDefault();
+  startRun();
 });
 
 function finish(r) {
@@ -280,7 +364,20 @@ function finish(r) {
   log('Done.');
   go.disabled = false;
   go.textContent = 'Convene the council';
+  lastResult = r;
   render(r);
+
+  const btn = document.getElementById('rescan');
+  if (btn) {
+    btn.addEventListener('click', () => {
+      const text = (document.getElementById('claims')?.value || '').trim();
+      if (!text) {
+        document.getElementById('claims')?.focus();
+        return;
+      }
+      startRun({ claims: text, prior: benchmark(lastResult) });
+    });
+  }
 }
 
 function fail(message) {

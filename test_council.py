@@ -178,6 +178,39 @@ def test_match_gate():
     check("empty requirements are survivable", match_percentage([], [])[0] == 0.0)
 
 
+def test_zero_weight_guard():
+    """A role that arrives without dimension weights must not score 0.
+
+    Regression: on a re-scan the rubric is reconstructed from the previous
+    result, and if the weights were not carried across, the weighted sum
+    divided a zero numerator by a fallback denominator and returned a
+    confident 0.0 for a candidate the council had scored in the eighties.
+    """
+    print("\nZero-weight guard")
+    pooled = {d: 84.0 for d in DIMENSIONS}
+    check("empty weights fall back to the unweighted mean", overall_score(pooled, {}) == 84.0,
+          f"got {overall_score(pooled, {})}")
+    check("all-zero weights do the same", overall_score(pooled, {d: 0.0 for d in DIMENSIONS}) == 84.0)
+    check("real weights still apply", overall_score({**pooled, "depth": 20.0},
+          {"depth": 1.0, **{d: 0.0 for d in DIMENSIONS if d != "depth"}}) == 20.0)
+    m = MemberScore(member="skeptic", model="m", scores={d: 60.0 for d in DIMENSIONS})
+    check("member overall survives empty weights", member_overall(m, {}) > 0)
+
+
+def test_ats_compliance():
+    print("\nATS compliance verdict")
+    clean = audit(GOOD_CV, "pdf", {"pages": 2, "images": 0})
+    check("a clean CV is compliant", clean.compliant is True, f"blockers {clean.blockers}")
+    check("and has no blockers", clean.blockers == [])
+    tabled = audit(GOOD_CV, "docx", {"tables": 2, "textboxes": 1, "images": 0})
+    check("tables break compliance", tabled.compliant is False)
+    check("text boxes are named as blockers", any("text box" in b.lower() for b in tabled.blockers))
+    check("compliance is independent of score", tabled.score > 50 and not tabled.compliant,
+          f"score {tabled.score}")
+    check("structural checks only apply to real files", "tables" not in {c["id"] for c in audit(GOOD_CV, "text").checks})
+    check("every check declares criticality", all("critical" in c for c in clean.checks))
+
+
 def test_labels():
     print("\nVerdict and confidence labels")
     check("strong", verdict_label(85, 85, 0) == "strong fit")
@@ -207,7 +240,7 @@ def test_weights():
 def main():
     for t in (test_json_salvage, test_ats_discriminates, test_evidence_is_verbatim,
               test_bias_correction, test_outlier_damping, test_match_gate,
-              test_labels, test_weights):
+              test_zero_weight_guard, test_ats_compliance, test_labels, test_weights):
         t()
     print(f"\n{'FAILED: ' + ', '.join(FAILS) if FAILS else 'All checks passed.'}")
     return 1 if FAILS else 0

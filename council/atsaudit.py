@@ -52,19 +52,29 @@ def _bullets(text: str) -> list[str]:
     return out
 
 
-def _check(cid, label, ok, weight, detail, fix=""):
+def _check(cid, label, ok, weight, detail, fix="", critical=False):
+    """One check. `critical` marks the failures a parser cannot recover from —
+    these decide the compliance verdict, not just the score."""
     return {
         "id": cid,
         "label": label,
         "status": "pass" if ok is True else ("warn" if ok == "warn" else "fail"),
         "weight": weight,
+        "critical": critical,
         "detail": detail,
         "fix": fix,
     }
 
 
-def audit(text: str, source: str = "text") -> ATSAudit:
-    """Run every mechanical check and return a weighted score out of 100."""
+def audit(text: str, source: str = "text", signals: dict | None = None) -> ATSAudit:
+    """Run every mechanical check and return a score plus a compliance verdict.
+
+    `signals` are the structural facts captured while the document was still a
+    file (tables, text boxes, images, page count). Without them this can only
+    guess at layout from whitespace; with them it can report the actual reason
+    a parser would mangle the CV.
+    """
+    signals = signals or {}
     checks: list[dict] = []
     words = text.split()
     wc = len(words)
@@ -77,6 +87,7 @@ def audit(text: str, source: str = "text") -> ATSAudit:
         "email", "Email address is findable", has_email, 3.0,
         "Found a parseable email address." if has_email else "No email address the parser could find.",
         "" if has_email else "Put a plain-text email in the top few lines — not in a header, footer, or image.",
+        critical=True,
     ))
 
     has_phone = bool(PHONE.search(text))
@@ -103,6 +114,7 @@ def audit(text: str, source: str = "text") -> ATSAudit:
         "sections", "Standard section headings", True if n_sec >= 3 else ("warn" if n_sec == 2 else False), 3.0,
         f"Found {n_sec}/3 standard headings ({', '.join(found_sections) or 'none'}).",
         "" if n_sec >= 3 else "Use literal headings — Experience, Education, Skills. Creative headings don't map to ATS fields.",
+        critical=n_sec < 2,
     ))
 
     n_dates = len(DATE_RANGE.findall(text))
@@ -110,6 +122,7 @@ def audit(text: str, source: str = "text") -> ATSAudit:
         "dates", "Parseable date ranges", True if n_dates >= 2 else ("warn" if n_dates == 1 else False), 3.0,
         f"Found {n_dates} machine-readable date range(s).",
         "" if n_dates >= 2 else "Write every role as 'Mar 2021 – Jun 2024'. Bare years or '21-24' often fail to parse.",
+        critical=n_dates == 0,
     ))
 
     bullets = _bullets(text)
@@ -148,6 +161,7 @@ def audit(text: str, source: str = "text") -> ATSAudit:
         "layout", "No multi-column or table layout", True if tab_ratio < 0.15 else ("warn" if tab_ratio < 0.35 else False), 2.5,
         f"{tab_ratio:.0%} of lines look like columns or table rows.",
         "" if tab_ratio < 0.15 else "Move to a single-column layout. Tables and columns get read out of order or dropped entirely.",
+        critical=tab_ratio >= 0.35,
     ))
 
     if wc == 0:
@@ -180,6 +194,67 @@ def audit(text: str, source: str = "text") -> ATSAudit:
             "Upload the actual file you submit to check its real formatting."
     checks.append(_check("source", "File format", src_ok, 1.0, sdetail, sfix))
 
+    # --- structural, from the file itself -----------------------------------
+    if source == "docx":
+        n_tab = int(signals.get("tables", 0))
+        checks.append(_check(
+            "tables", "No table-based layout", n_tab == 0, 3.0,
+            f"{n_tab} table(s) in the document." if n_tab else "No tables.",
+            "" if n_tab == 0 else "Rebuild the CV without tables. Parsers read cells in the wrong order, "
+                                  "so a two-column table turns your dates into the middle of a sentence.",
+            critical=n_tab > 0,
+        ))
+        n_tb = int(signals.get("textboxes", 0))
+        checks.append(_check(
+            "textboxes", "No text boxes", n_tb == 0, 3.0,
+            f"{n_tb} text box(es) detected." if n_tb else "No text boxes.",
+            "" if n_tb == 0 else "Move text-box content into normal paragraphs. Most parsers cannot see "
+                                 "inside a text box at all — that content is simply missing to them.",
+            critical=n_tb > 0,
+        ))
+
+    n_img = int(signals.get("images", 0))
+    if source in ("pdf", "docx"):
+        checks.append(_check(
+            "images", "Not reliant on images", n_img == 0 or "warn", 1.5,
+            f"{n_img} embedded image(s)." if n_img else "No embedded images.",
+            "" if n_img == 0 else "Make sure nothing important — contact details, skills, a skills chart — "
+                                  "exists only inside an image. An ATS reads none of it.",
+        ))
+
+    pages = int(signals.get("pages", 0))
+    if pages:
+        ok_pages = True if pages <= 2 else ("warn" if pages == 3 else False)
+        checks.append(_check(
+            "pages", "Sensible page count", ok_pages, 1.0,
+            f"{pages} page(s).",
+            "" if ok_pages is True else "Two pages is the practical ceiling for most roles; three for very senior ones.",
+        ))
+
+    # --- date-format consistency -------------------------------------------
+    styles = set()
+    for m in DATE_RANGE.finditer(text):
+        frag = m.group(0).lower()
+        if re.search(MONTH, frag):
+            styles.add("month-year")
+        elif "/" in frag:
+            styles.add("numeric")
+        else:
+            styles.add("year-only")
+    checks.append(_check(
+        "date_style", "Consistent date format", True if len(styles) <= 1 else "warn", 1.5,
+        f"{len(styles) or 0} date format(s) in use ({', '.join(sorted(styles)) or 'none found'}).",
+        "" if len(styles) <= 1 else "Pick one format and use it everywhere. Mixed formats make a parser "
+                                    "guess, and it guesses wrong on the ones it likes least.",
+    ))
+
     earned = sum(c["weight"] * (1.0 if c["status"] == "pass" else 0.5 if c["status"] == "warn" else 0.0) for c in checks)
     total = sum(c["weight"] for c in checks)
-    return ATSAudit(score=round(100 * earned / total, 1) if total else 0.0, checks=checks, parsed_chars=len(text))
+    blockers = [c["label"] for c in checks if c["critical"] and c["status"] == "fail"]
+    return ATSAudit(
+        score=round(100 * earned / total, 1) if total else 0.0,
+        compliant=not blockers,
+        blockers=blockers,
+        checks=checks,
+        parsed_chars=len(text),
+    )

@@ -82,7 +82,36 @@ HARD RULES
 
 
 def system_prompt(m: Member) -> str:
+    """The whole instruction set for one member, system prompt and all.
+
+    Kept for callers that want a single string. The runtime does NOT use this:
+    see shared_system() and persona_block() for why.
+    """
     return f"{_BASE_RULES}\n\nYOUR ASSIGNED PERSPECTIVE — {m.title}\n{m.lens.strip()}"
+
+
+def shared_system() -> str:
+    """The half of the instructions every member shares, verbatim.
+
+    Ollama reuses the KV cache for an identical prompt prefix, and a member's
+    prompt is ~3.5K tokens of which all but a few hundred are the same for
+    every member on that model — the role, the evidence block, the requirement
+    verdicts, the CV itself. Putting the persona in the system prompt, which
+    precedes all of it, meant no two members ever shared a prefix and each one
+    re-processed the lot from scratch: measured at 7-9s per 1,264 tokens on a
+    14B model.
+
+    So the constant rules go here, the variable persona goes at the END of the
+    user prompt (see persona_block), and members that share a model share a
+    cacheable prefix. Measured effect on a repeated prefix: prompt processing
+    fell from 8.10s to 0.51s.
+    """
+    return _BASE_RULES
+
+
+def persona_block(m: Member) -> str:
+    """The member-specific half, appended last so it never breaks the prefix."""
+    return f"YOUR ASSIGNED PERSPECTIVE — {m.title}\n{m.lens.strip()}"
 
 
 COUNCIL: tuple[Member, ...] = (

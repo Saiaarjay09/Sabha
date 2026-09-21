@@ -48,7 +48,9 @@ def corrected_scores(m: MemberScore) -> dict[str, float]:
 def member_overall(m: MemberScore, dim_weights: dict[str, float], corrected: bool = True) -> float:
     """One member's single number, on the role's own axes."""
     s = corrected_scores(m) if corrected else {d: _clamp(float(m.scores.get(d, 50.0))) for d in DIMENSIONS}
-    tw = sum(dim_weights.get(d, 0.0) for d in DIMENSIONS) or 1.0
+    tw = sum(dim_weights.get(d, 0.0) for d in DIMENSIONS)
+    if tw <= 0:
+        return round(sum(s[d] for d in DIMENSIONS) / len(DIMENSIONS), 1)
     return round(sum(s[d] * dim_weights.get(d, 0.0) for d in DIMENSIONS) / tw, 1)
 
 
@@ -124,7 +126,15 @@ def consensus(members: list[MemberScore], dim_weights: dict[str, float]) -> floa
 
 
 def overall_score(pooled: dict[str, float], dim_weights: dict[str, float]) -> float:
-    tw = sum(dim_weights.get(d, 0.0) for d in DIMENSIONS) or 1.0
+    """Weighted mean of the pooled dimensions on the role's own axes.
+
+    An all-zero weight vector is treated as "no opinion, weight them equally"
+    rather than divided through: the previous behaviour returned a confident
+    0.0 for a candidate the council had actually scored in the eighties.
+    """
+    tw = sum(dim_weights.get(d, 0.0) for d in DIMENSIONS)
+    if tw <= 0:
+        return round(_clamp(sum(pooled.get(d, 50.0) for d in DIMENSIONS) / len(DIMENSIONS)), 1)
     return round(_clamp(sum(pooled.get(d, 50.0) * dim_weights.get(d, 0.0) for d in DIMENSIONS) / tw), 1)
 
 

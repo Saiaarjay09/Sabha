@@ -119,6 +119,7 @@ def _credit_to_label(c: float) -> str:
 async def _judge_chunk(
     llm: Ollama, model: str, role: RoleProfile, evidence_block: str,
     reqs: list[Requirement], valid_ids: set[str], temperature: float,
+    claim_ids: set[str] | None = None,
 ) -> dict[str, RequirementVerdict]:
     data, _ = await llm.generate_json(
         _SYSTEM,
@@ -153,6 +154,22 @@ async def _judge_chunk(
         # resting on an invented id must not carry that id forward.
         cited = [str(e).strip().upper() for e in ids]
         cited = [e for e in cited if e in valid_ids][:8]
+        claims = claim_ids or set()
+        # Two different questions, and conflating them hid the claim's effect.
+        #
+        # `from_claim` is about transparency: if an unverified statement
+        # contributed to this verdict AT ALL, the candidate should see that,
+        # even where CV evidence was cited alongside it.
+        #
+        # The cap is about trust, and applies only when the verdict rests
+        # ENTIRELY on the candidate's word. A verdict partly grounded in the
+        # CV has not earned the same discount.
+        from_claim = any(e in claims for e in cited)
+        only_claims = bool(cited) and all(e in claims for e in cited)
+        if only_claims:
+            if cov == "direct":
+                cov = "partial"
+            conf = min(conf, 0.55)
         if cov in ("direct", "transferable") and not cited:
             # A positive verdict with no valid citation is unsupported; keep it
             # but discount it rather than trusting it at face value.
@@ -161,6 +178,7 @@ async def _judge_chunk(
             requirement_id=rid, coverage=cov, confidence=conf, evidence_ids=cited,
             reasoning=str(v.get("reasoning", "")).strip()[:500],
             gap=str(v.get("gap", "")).strip()[:300],
+            from_claim=from_claim,
         )
     return out
 
@@ -196,11 +214,13 @@ def _pool(a: RequirementVerdict | None, b: RequirementVerdict | None, rid: str) 
         evidence_ids=list(dict.fromkeys(a.evidence_ids + b.evidence_ids))[:8],
         reasoning=reasoning[:600],
         gap=(lead.gap or other.gap)[:300],
+        from_claim=a.from_claim or b.from_claim,
     )
 
 
 async def match_requirements(
     llm: Ollama, role: RoleProfile, units: list[EvidenceUnit], progress=None,
+    claims: list = None,
 ) -> tuple[list[RequirementVerdict], list[str]]:
     """Judge every requirement with two models and pool the verdicts."""
     from council.evidence import render, valid_ids as _vids
@@ -208,6 +228,13 @@ async def match_requirements(
     notes: list[str] = []
     evidence_block = render(units)
     ids = _vids(units)
+    claim_ids: set[str] = set()
+    if claims:
+        from council.evidence import render_claims
+
+        evidence_block += "\n\n" + render_claims(claims)
+        claim_ids = {c.id for c in claims}
+        ids = ids | claim_ids
     reqs = role.requirements
     chunks = [reqs[i : i + _CHUNK] for i in range(0, len(reqs), _CHUNK)]
 
@@ -221,9 +248,9 @@ async def match_requirements(
         m2 = None
         notes.append("Only one model family installed, so requirement matching had no second opinion.")
 
-    tasks = [_judge_chunk(llm, m1, role, evidence_block, ch, ids, 0.15) for ch in chunks]
+    tasks = [_judge_chunk(llm, m1, role, evidence_block, ch, ids, 0.15, claim_ids) for ch in chunks]
     if m2:
-        tasks += [_judge_chunk(llm, m2, role, evidence_block, ch, ids, 0.3) for ch in chunks]
+        tasks += [_judge_chunk(llm, m2, role, evidence_block, ch, ids, 0.3, claim_ids) for ch in chunks]
 
     if progress:
         await progress(f"Judging {len(reqs)} requirements against the CV" + (f" on {m1} and {m2}" if m2 else f" on {m1}"))

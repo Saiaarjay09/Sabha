@@ -25,12 +25,14 @@ from typing import Awaitable, Callable
 
 from council import aggregate, atsaudit, evidence, jd, match, timings
 from council.config import settings
-from council.personas import BY_NAME, COUNCIL, Member, system_prompt
+from council.personas import BY_NAME, COUNCIL, Member, persona_block, shared_system
 from council.providers import Ollama
 from council.schema import (
     COVERAGE_CREDIT,
+    Claim,
     DIMENSIONS,
     ATSAudit,
+    EvidenceUnit,
     CouncilResult,
     Improvement,
     MemberScore,
@@ -40,7 +42,11 @@ from council.schema import (
 
 Progress = Callable[[str, dict | None], Awaitable[None]]
 
-_MEMBER_TEMPLATE = """
+# Split in two on purpose. Everything in _SHARED_BLOCK is identical for every
+# member assessing this candidate, so it sits first and Ollama can reuse its
+# KV cache across the members that share a model. Only _PERSONA_TASK differs,
+# and it goes last.
+_SHARED_BLOCK = """
 ROLE BEING ASSESSED: {title} ({seniority}{family})
 WHAT THIS ROLE ACTUALLY NEEDS:
 {summary}
@@ -55,6 +61,10 @@ CV EVIDENCE (cite these ids):
 {evidence}
 
 {cv_section}
+""".strip()
+
+_PERSONA_TASK = """
+{persona}
 
 Score the candidate FOR THIS ROLE on each dimension, 0-100:
   relevance     — how much this experience bears on this specific job
@@ -69,8 +79,8 @@ Return exactly:
 {{
   "scores": {{"relevance": 0, "depth": 0, "impact": 0, "trajectory": 0, "communication": 0, "risk": 0}},
   "headline": "one sentence, your verdict in your own voice",
-  "strengths": ["2-4 specific strengths, each citing evidence ids"],
-  "concerns": ["2-4 specific concerns, each citing evidence ids where relevant"],
+  "strengths": ["2-3 specific strengths, each citing evidence ids"],
+  "concerns": ["2-3 specific concerns, each citing evidence ids where relevant"],
   "recommendation": "strong_yes | yes | borderline | no"
 }}
 """.strip()
@@ -188,15 +198,16 @@ async def _run_member(
     async with sem:
         if progress:
             await progress(f"{m.title} is reading ({model})", {"member": m.name, "state": "running"})
+        shared = _SHARED_BLOCK.format(
+            title=role.title, seniority=role.seniority,
+            family=f", {role.role_family}" if role.role_family else "",
+            summary=role.summary or "(not stated)",
+            req_summary=req_summary, evidence=ev_block, cv_section=cv_section,
+        )
         data, resp = await llm.generate_json(
-            system_prompt(m),
-            _MEMBER_TEMPLATE.format(
-                title=role.title, seniority=role.seniority,
-                family=f", {role.role_family}" if role.role_family else "",
-                summary=role.summary or "(not stated)",
-                req_summary=req_summary, evidence=ev_block, cv_section=cv_section,
-            ),
-            model, temperature=m.temperature, max_tokens=1100,
+            shared_system(),
+            shared + "\n\n" + _PERSONA_TASK.format(persona=persona_block(m)),
+            model, temperature=m.temperature, max_tokens=settings.member_max_tokens,
             timeout=settings.member_timeout_s,
         )
 
@@ -215,7 +226,7 @@ async def _run_member(
         v = data.get(key) or []
         if isinstance(v, str):
             v = [v]
-        return [str(x).strip()[:400] for x in v if str(x).strip()][:4]
+        return [str(x).strip()[:400] for x in v if str(x).strip()][:3]
 
     rec = str(data.get("recommendation", "borderline")).lower().strip().replace(" ", "_")
     return MemberScore(
@@ -242,6 +253,7 @@ def _deterministic_improvements(ats: ATSAudit) -> list[Improvement]:
 async def _synthesise(
     llm: Ollama, role: RoleProfile, verdicts: list[RequirementVerdict],
     members: list[MemberScore], ats: ATSAudit, ev_block: str,
+    units: list[EvidenceUnit],
 ) -> tuple[str, list[Improvement]]:
     by_id = {r.id: r for r in role.requirements}
     gaps = [
@@ -258,6 +270,14 @@ async def _synthesise(
     if not model:
         return "", det
 
+    # The coach needs the candidate's own words to write a concrete rewrite,
+    # but it does not need all seventy evidence units to do it — the gaps and
+    # concerns above already say what is wrong. Send the units it can actually
+    # rewrite: the achievements and roles, capped. Measured at a quarter of a
+    # run's wall time, this stage is worth not overfeeding.
+    rewritable = [u for u in units if u.kind in ("achievement", "role", "project")][:24]
+    ev_for_coach = "\n".join(f"[{u.id}] {u.text}" for u in rewritable) or ev_block
+
     data, _ = await llm.generate_json(
         _SYNTH_SYSTEM,
         _SYNTH_TEMPLATE.format(
@@ -265,9 +285,9 @@ async def _synthesise(
             gaps="\n".join(gaps) or "(none — the candidate evidenced everything)",
             concerns="\n".join(concerns) or "(none recorded)",
             ats="\n".join(failed) or "(all mechanical checks passed)",
-            evidence=ev_block,
+            evidence=ev_for_coach,
         ),
-        model, temperature=0.35, max_tokens=2200,
+        model, temperature=0.35, max_tokens=settings.synth_max_tokens,
     )
     if not isinstance(data, dict):
         return "", det
@@ -298,9 +318,44 @@ async def _synthesise(
     return str(data.get("summary", "")).strip()[:1200], improvements[:10]
 
 
+def _delta(prior: dict, score: float, match_pct: float,
+           role: RoleProfile, verdicts: list[RequirementVerdict]) -> dict:
+    """What moved against the previous scan, and on what basis.
+
+    Reported per requirement as well as in aggregate, because "your score went
+    up four points" is not useful on its own — what matters is which
+    requirement moved, and whether it moved because of evidence or because the
+    candidate simply asserted it.
+    """
+    def _num(a: float, b: float) -> dict:
+        return {"from": round(a, 1), "to": round(b, 1), "change": round(b - a, 1)}
+
+    was = {v.get("requirement_id"): v for v in (prior.get("requirements") or [])}
+    texts = {r["id"]: r.get("text", "") for r in (prior.get("role", {}).get("requirements") or [])}
+    moved = []
+    for v in verdicts:
+        before = (was.get(v.requirement_id) or {}).get("coverage")
+        if before and before != v.coverage:
+            moved.append({
+                "id": v.requirement_id,
+                "text": texts.get(v.requirement_id, ""),
+                "from": before,
+                "to": v.coverage,
+                "from_claim": v.from_claim,
+                "improved": COVERAGE_CREDIT.get(v.coverage, 0) > COVERAGE_CREDIT.get(before, 0),
+            })
+    return {
+        "score": _num(float(prior.get("score", 0)), score),
+        "match_pct": _num(float(prior.get("match_pct", 0)), match_pct),
+        "verdict": {"from": prior.get("verdict", ""), "to": ""},
+        "requirements": moved,
+    }
+
+
 async def run(
     ats_cv: str, exec_cv: str, job_title: str, jd_text: str, source: str = "text",
-    progress: Progress | None = None,
+    signals: dict | None = None, progress: Progress | None = None,
+    claim_texts: list[str] | None = None, prior: dict | None = None,
 ) -> CouncilResult:
     t0 = time.perf_counter()
     llm = Ollama()
@@ -316,9 +371,29 @@ async def run(
         raise RuntimeError("No local models are available — the Ollama service isn't reachable.")
 
     # 1. the job, before the CV
-    await say("Reading the job and working out what it actually requires")
-    with timer.stage("job_analysis"):
-        role, note = await jd.analyse_job(llm, job_title, jd_text)
+    #
+    # On a re-scan the previous run's rubric is reused rather than regenerated.
+    # That is not only faster — it is what makes the comparison meaningful. If
+    # the job were re-decomposed, the requirements could come back different
+    # and any movement in the score would be unattributable: you could not tell
+    # whether the candidate's reply changed anything or the ruler had changed.
+    if prior and prior.get("role", {}).get("requirements"):
+        role = RoleProfile.model_validate(prior["role"])
+        # A reconstructed role may arrive without dimension weights, and empty
+        # weights make the weighted score sum to zero — a silent 0.0 rather
+        # than an error. Never let that happen: fall back to the generic
+        # weighting and say so, because the axes must match the first scan for
+        # the comparison to mean anything.
+        if not role.dimension_weights:
+            role.dimension_weights = jd.default_weights()
+            notes.append("The previous scan's dimension weights were missing, so a generic "
+                         "weighting was used — the score is comparable only approximately.")
+        note = None
+        await say("Re-using the previous scan's requirements as the benchmark")
+    else:
+        await say("Reading the job and working out what it actually requires")
+        with timer.stage("job_analysis"):
+            role, note = await jd.analyse_job(llm, job_title, jd_text)
     if note:
         notes.append(note)
     await say(f"Identified {len(role.requirements)} real requirements", {"role": role.model_dump()})
@@ -326,13 +401,18 @@ async def run(
     # 2. the CV, indexed mechanically
     with timer.stage("cv_indexing"):
         units = evidence.index_cv(ats_cv if ats_cv.strip() else exec_cv)
-        ats = atsaudit.audit(ats_cv if ats_cv.strip() else exec_cv, source)
+        ats = atsaudit.audit(ats_cv if ats_cv.strip() else exec_cv, source, signals)
     await say(f"Indexed {len(units)} pieces of evidence from the CV")
     ev_block = evidence.render(units)
+    claims = evidence.build_claims(claim_texts or [])
+    if claims:
+        ev_block += "\n\n" + evidence.render_claims(claims)
+        notes.append(f"{len(claims)} unverified statement(s) from you were considered alongside the CV.")
 
     # 3. requirement-by-requirement judgement
     with timer.stage("requirement_matching"):
-        verdicts, mnotes = await match.match_requirements(llm, role, units, lambda m: say(m))
+        verdicts, mnotes = await match.match_requirements(
+            llm, role, units, lambda m: say(m), claims=claims)
     notes += mnotes
     await say("Requirement matching complete", {"verdicts": [v.model_dump() for v in verdicts]})
 
@@ -421,7 +501,7 @@ async def run(
 
     await say("Aggregating the panel and writing your improvements")
     with timer.stage("synthesis"):
-        summary, improvements = await _synthesise(llm, role, verdicts, members, ats, ev_block)
+        summary, improvements = await _synthesise(llm, role, verdicts, members, ats, ev_block, units)
 
     for ms in members:
         timer.member(ms.member, ms.model, ms.latency_s, ms.ok)
@@ -429,10 +509,18 @@ async def run(
                 members_ok=len(ok), members_total=len(members))
     timer.record()
 
+    delta = _delta(prior, score, match_pct, role, verdicts) if prior else None
+
+    final_verdict = aggregate.verdict_label(score, match_pct, len(blocking))
+    if delta:
+        delta["verdict"]["to"] = final_verdict
+
     return CouncilResult(
+        claims=claims,
+        delta=delta,
         score=score,
         match_pct=match_pct,
-        verdict=aggregate.verdict_label(score, match_pct, len(blocking)),
+        verdict=final_verdict,
         confidence=aggregate.confidence_label(cons, verdicts, len(ok), len(members)),
         consensus=cons,
         role=role,

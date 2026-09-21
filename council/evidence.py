@@ -13,7 +13,7 @@ from __future__ import annotations
 import re
 
 from council.atsaudit import DATE_RANGE, METRIC
-from council.schema import EvidenceUnit
+from council.schema import Claim, EvidenceUnit
 
 _BULLET = re.compile(r"^(?:-|\*|•|·|‣|◦|–|—|\d+[.)])\s+")
 _HEADING = re.compile(
@@ -130,3 +130,34 @@ def render(units: list[EvidenceUnit]) -> str:
 
 def valid_ids(units: list[EvidenceUnit]) -> set[str]:
     return {u.id for u in units}
+
+
+def build_claims(texts: list[str], max_claims: int = 8) -> list[Claim]:
+    """Number the candidate's replies as C01… — a namespace of their own."""
+    out: list[Claim] = []
+    for t in texts:
+        t = " ".join(str(t).split())[:600]
+        if len(t) < 3:
+            continue
+        out.append(Claim(id=f"C{len(out) + 1:02d}", text=t))
+        if len(out) >= max_claims:
+            break
+    return out
+
+
+def render_claims(claims: list[Claim]) -> str:
+    """How the council sees a claim: labelled, and never as evidence."""
+    if not claims:
+        return ""
+    lines = [
+        "CANDIDATE'S OWN STATEMENTS (UNVERIFIED — NOT FROM THE CV).",
+        "The candidate replied to an earlier assessment with the following. Treat",
+        "each as an assertion, not as evidence: it may be true, but nothing in the",
+        "CV demonstrates it. A requirement supported ONLY by a statement here can",
+        "never be judged 'direct' — at best it is 'partial', and you must say that",
+        "the support is the candidate's own word. Cite these as [C01] etc., never",
+        "as [E..]. If a statement contradicts the CV, say so.",
+        "",
+    ]
+    lines += [f"[{c.id}] {c.text}" for c in claims]
+    return "\n".join(lines)

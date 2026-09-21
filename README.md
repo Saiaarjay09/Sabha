@@ -160,6 +160,17 @@ every time.
 For a full code tour — the design, an end-to-end walkthrough of one request,
 and what every file does — see [ARCHITECTURE.md](ARCHITECTURE.md).
 
+## Replying to the council
+
+A result is not final. The reply box takes things left off the CV, or points
+the council read wrongly, and re-runs with them in view — reusing the previous
+scan's requirements so the two are comparable, and reporting exactly what moved.
+
+Anything said in a reply is treated as **the candidate's word, not evidence**:
+it is cited in a separate namespace (`C01` rather than `E01`), can never make a
+requirement count as fully demonstrated, and is labelled as unverified wherever
+it affected the result.
+
 ## Running it
 
 Needs [Ollama](https://ollama.com) and Python 3.11+.

@@ -119,18 +119,18 @@ async def council_info():
 
 # --- the run --------------------------------------------------------------
 
-async def _read_input(field: str, file: UploadFile | None, text: str, cap: int) -> tuple[str, str]:
-    """Returns (text, source). Source is what the ATS audit needs to know."""
+async def _read_input(field: str, file: UploadFile | None, text: str, cap: int) -> tuple[str, str, dict]:
+    """Returns (text, source, signals) — all three feed the ATS audit."""
     if file is not None and file.filename:
         data = await file.read()
         if len(data) > settings.max_upload_bytes:
             raise HTTPException(413, f"{field} is larger than {settings.max_upload_bytes // (1024*1024)}MB.")
         try:
-            body, source = from_upload(file.filename, data)
+            body, source, signals = from_upload(file.filename, data)
         except ExtractionError as e:
             raise HTTPException(400, str(e))
-        return body[:cap], source
-    return (text or "").strip()[:cap], "text"
+        return body[:cap], source, signals
+    return (text or "").strip()[:cap], "text", {}
 
 
 @app.post("/api/analyze")
@@ -142,13 +142,15 @@ async def analyze(
     exec_cv_text: str = Form(""),
     ats_cv_file: UploadFile | None = None,
     exec_cv_file: UploadFile | None = None,
+    claims: str = Form(""),
+    prior: str = Form(""),
 ):
     ip = _client(request)
     if _rate_limited(ip):
         raise HTTPException(429, f"That's {settings.rate_limit_per_hour} analyses this hour from your connection — the limit. Try again later.")
 
-    ats_cv, ats_source = await _read_input("ATS CV", ats_cv_file, ats_cv_text, settings.max_chars_cv)
-    exec_cv, exec_source = await _read_input("Executive CV", exec_cv_file, exec_cv_text, settings.max_chars_cv)
+    ats_cv, ats_source, ats_signals = await _read_input("ATS CV", ats_cv_file, ats_cv_text, settings.max_chars_cv)
+    exec_cv, exec_source, exec_signals = await _read_input("Executive CV", exec_cv_file, exec_cv_text, settings.max_chars_cv)
     jd_text = (job_description or "").strip()[: settings.max_chars_jd]
     job_title = (job_title or "").strip()[:200]
 
@@ -159,11 +161,28 @@ async def analyze(
     if not jd_text and not job_title:
         raise HTTPException(400, "Tell us the job — a title at minimum, ideally the full description.")
 
+    # Re-scan inputs. The previous result is sent back by the browser rather
+    # than held here: the service keeps nothing between requests, so the client
+    # is the only place it can live, and that keeps the storage promise intact.
+    claim_list = [c.strip() for c in (claims or "").split("\n") if c.strip()][:8]
+    claim_list = [c[:600] for c in claim_list]
+    prior_obj = None
+    if prior.strip():
+        try:
+            parsed = json.loads(prior)
+            if isinstance(parsed, dict):
+                prior_obj = parsed
+        except (json.JSONDecodeError, ValueError):
+            prior_obj = None   # a malformed benchmark is ignored, not fatal
+
     run_id = uuid.uuid4().hex
     _runs[run_id] = {
         "queue": asyncio.Queue(),
         "created": time.time(),
-        "args": (ats_cv, exec_cv, job_title, jd_text, ats_source if ats_cv.strip() else exec_source),
+        "args": (ats_cv, exec_cv, job_title, jd_text,
+                 ats_source if ats_cv.strip() else exec_source,
+                 ats_signals if ats_cv.strip() else exec_signals,
+                 claim_list, prior_obj),
         "started": False,
     }
     return {"run_id": run_id}
@@ -181,7 +200,11 @@ async def _drive(run_id: str):
     try:
         async with _run_slots:
             await progress("Warming up the local models")
-            result = await run_council(*rec["args"], progress=progress)
+            a = rec["args"]
+            result = await run_council(
+                a[0], a[1], a[2], a[3], source=a[4], signals=a[5],
+                progress=progress, claim_texts=a[6], prior=a[7],
+            )
         await q.put({"type": "result", "result": result.model_dump()})
     except Exception as e:
         await q.put({"type": "error", "message": f"{type(e).__name__}: {e}"})
@@ -222,6 +245,38 @@ async def stream(run_id: str):
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive"},
     )
+
+
+@app.on_event("startup")
+async def _prewarm():
+    """Pin the council's models in VRAM before the first visitor arrives.
+
+    A model that has to load inside a run adds its load time to that person's
+    wait, and the first run after an idle period was consistently the slowest.
+    This pays that cost once, at boot, in the background — a failure here is
+    irrelevant, because the run path loads models on demand anyway.
+    """
+    if not settings.prewarm:
+        return
+
+    async def warm():
+        from council.personas import COUNCIL
+        from council.providers import Ollama
+
+        llm = Ollama()
+        wanted: list[str] = []
+        for m in COUNCIL:
+            model = await llm.resolve(m.preferred_models)
+            if model and model not in wanted:
+                wanted.append(model)
+        for model in wanted:
+            try:
+                # One token is enough to force the weights resident.
+                await llm.generate("", "hi", model, max_tokens=1, json_mode=False, timeout=180)
+            except Exception:
+                pass
+
+    asyncio.create_task(warm())
 
 
 @app.on_event("startup")

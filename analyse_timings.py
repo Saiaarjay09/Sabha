@@ -42,6 +42,20 @@ def main() -> int:
         print(f"No timing records yet at {p}.\nRun an analysis and try again.")
         return 1
 
+    # Split by code version, since comparing a median across an optimisation
+    # is the whole point of keeping this log.
+    versions = sorted({r.get("version", "pre-1.1.0") for r in rows})
+    if len(versions) > 1:
+        print(f"\n{len(rows)} run(s) across {len(versions)} code version(s):")
+        for v in versions:
+            xs = [r["total_s"] for r in rows if r.get("version", "pre-1.1.0") == v]
+            print(f"  {v:12s} n={len(xs):<3d} median {st.median(xs):7.1f}s  fastest {min(xs):7.1f}s")
+        latest = versions[-1]
+        keep = [r for r in rows if r.get("version", "pre-1.1.0") == latest]
+        if len(keep) >= 1:
+            print(f"\n  ↓ breakdown below is for {latest} only ({len(keep)} run(s))")
+            rows = keep
+
     totals = [r["total_s"] for r in rows]
     print(f"\n{len(rows)} run(s) recorded · {rows[0]['ts']} → {rows[-1]['ts']}\n")
     print("TOTAL RUNTIME")

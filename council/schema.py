@@ -88,6 +88,22 @@ class EvidenceUnit(BaseModel):
     quantified: bool = False
 
 
+class Claim(BaseModel):
+    """Something the candidate asserted in a reply that is not in their CV.
+
+    Claims deliberately live in their own id namespace (C01, C02 …) rather
+    than joining the evidence index. The integrity guarantee of this system is
+    that an assessor citing [E07] is pointing at text the candidate actually
+    wrote; a claim is text the candidate merely says is true. Mixing the two
+    would quietly destroy that guarantee — so they are numbered differently,
+    rendered differently, and the models are told the difference.
+    """
+
+    id: str
+    text: str
+    verified: bool = False
+
+
 class RequirementVerdict(BaseModel):
     """The judgement on a single requirement, with its receipts."""
 
@@ -97,6 +113,9 @@ class RequirementVerdict(BaseModel):
     evidence_ids: list[str] = Field(default_factory=list)
     reasoning: str = ""
     gap: str = Field(default="", description="What is missing, if anything")
+    # True when this verdict rests on an unverified claim rather than the CV.
+    # Surfaced in the UI, because "you told us you can" is not "your CV shows".
+    from_claim: bool = False
 
 
 class MemberScore(BaseModel):
@@ -128,9 +147,17 @@ class Improvement(BaseModel):
 
 
 class ATSAudit(BaseModel):
-    """Deterministic, non-LLM checks on the machine-readable CV."""
+    """Deterministic, non-LLM checks on the machine-readable CV.
+
+    `score` is a weighted pass rate and is a matter of degree. `compliant` is
+    not: it is false when any check the parser cannot recover from has failed,
+    however good the rest of the score looks. A CV can score 78 and still be
+    non-compliant, and that is the more actionable fact.
+    """
 
     score: float = 0.0
+    compliant: bool = True
+    blockers: list[str] = Field(default_factory=list)
     checks: list[dict] = Field(default_factory=list)
     parsed_chars: int = 0
 
@@ -152,3 +179,6 @@ class CouncilResult(BaseModel):
     summary: str = ""
     elapsed_s: float = 0.0
     notes: list[str] = Field(default_factory=list)
+    claims: list[Claim] = Field(default_factory=list)
+    # Present only on a re-scan: what moved against the previous scan.
+    delta: dict | None = None

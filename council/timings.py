@@ -8,9 +8,10 @@ keep.
 
 WHAT IS RECORDED
   wall-clock durations for the run and for each stage, each council member's
-  latency and which model served it, and the small structural counts needed to
-  interpret those numbers (how many requirements, how many evidence units, how
-  many members answered). Integers and model names.
+  latency and which model served it, the code version that produced the row,
+  and the small structural counts needed to interpret those numbers (how many
+  requirements, how many evidence units, how many members answered). Integers,
+  model names and a version string.
 
 WHAT IS NEVER RECORDED
   no CV text, no job description text, no job title, no filenames, no scores,
@@ -75,8 +76,13 @@ class RunTimer:
 
     def record(self) -> dict:
         """Build the row and append it. Never raises into the request path."""
+        from council import __version__
+
         row = {
             "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            # Rows accumulate across code changes, and a median that silently
+            # mixes "before" and "after" is worse than no median at all.
+            "version": __version__,
             "total_s": self.total_s,
             "stages": self.stages,
             "members": self.members,

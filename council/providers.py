@@ -151,7 +151,7 @@ class Ollama:
             "options": {
                 "temperature": temperature,
                 "num_predict": max_tokens,
-                "num_ctx": 8192,
+                "num_ctx": settings.num_ctx,
             },
             # Keep weights resident between members, or a five-model council
             # pays the load cost five times over.

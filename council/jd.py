@@ -97,6 +97,11 @@ _FALLBACK_WEIGHTS = {
 }
 
 
+def default_weights() -> dict[str, float]:
+    """The generic dimension weighting, for when a role carries none."""
+    return dict(_FALLBACK_WEIGHTS)
+
+
 def _normalise_weights(raw: dict | None) -> dict[str, float]:
     if not isinstance(raw, dict):
         return dict(_FALLBACK_WEIGHTS)

@@ -276,8 +276,11 @@ model fails entirely, so a run still returns something useful and says so.
 ### `council/extract.py`
 Turns an upload into text, in memory, dropping the bytes immediately.
 `from_upload()` sniffs by extension *and* magic bytes (`%PDF-`, `PK`) and
-returns `(text, source)` — the source kind is carried through to the ATS audit,
-which judges a real PDF differently from pasted text.
+returns `(text, source, signals)`. The signals are the structural facts that
+exist only while the document is still a document — DOCX table and text-box
+counts, embedded image counts, PDF page count — and they are unrecoverable once
+it becomes a string. They were previously read and thrown away, which meant the
+audit could not report the single most common reason a Word CV parses badly.
 
 The PDF path has a deliberate behaviour: if under 120 characters are
 extractable, it raises rather than proceeding, with the message that the file
@@ -303,7 +306,13 @@ losing the end of someone's career.
 set that `match.py` validates citations against.
 
 ### `council/atsaudit.py`
-Stage 2b. Twelve weighted checks, all pure Python, all reproducible.
+Stage 2b. Weighted mechanical checks, all pure Python, all reproducible.
+
+**There is no ATS standard to measure against.** Workday, Greenhouse, Taleo,
+iCIMS and the rest each parse differently and none publish a specification, so
+nothing here can claim to reproduce "the" ATS. What this measures is the set of
+things known to break real parsers, chosen so the result is reproducible rather
+than a model's opinion.
 
 The reasoning is explicit: an LLM asked "is this ATS-friendly?" will cheerfully
 hallucinate a verdict, but most of what actually breaks a CV in a real tracking
@@ -313,9 +322,25 @@ readable date ranges (3), bullet usage, quantified-result density (3),
 duty-listing openers like "Responsible for", multi-column/table layout (2.5),
 length, exotic glyphs, and file format.
 
-Each check returns `pass` / `warn` / `fail` plus a `detail` and a concrete
-`fix`. The score is the weighted pass rate — `pass` earns full weight, `warn`
-half, `fail` none. Same CV in, same number out, every time.
+Each check returns `pass` / `warn` / `fail` plus a `detail`, a concrete `fix`,
+and a `critical` flag. The score is the weighted pass rate — `pass` earns full
+weight, `warn` half, `fail` none. Same CV in, same number out, every time.
+
+**Score and compliance are different questions.** The score is a matter of
+degree; `compliant` is not. A CV is non-compliant when any *critical* check
+fails — a failure a parser cannot recover from, such as an unfindable email,
+no parseable dates, a table-based layout or a text box. A CV can score 77 and
+still be non-compliant, and that is the more actionable fact, so it is reported
+as its own verdict with the blocking reasons named.
+
+**The structural checks are the accuracy story.** Most of what breaks a parser
+is invisible once a document has been flattened to text, so `extract.py` now
+captures it while the file is still a file and passes it in as `signals`:
+DOCX tables and text boxes, embedded images, PDF page count. Tables are the
+classic failure — parsers read cells in the wrong order — and text boxes are
+worse, because their content is invisible to the parser *and* to us. A CV with
+its email in a text box will fail the "email is findable" check for exactly the
+reason a real ATS would drop it.
 
 ### `council/match.py`
 Stage 3, and the highest-leverage step in the pipeline since it drives the
@@ -340,6 +365,48 @@ the result back to a label via `_credit_to_label()` midpoints, unions the
 citations, and — when the two models disagreed — multiplies confidence by 0.72
 and appends the dissenting reading to the reasoning so the disagreement is
 visible rather than averaged away.
+
+### The re-scan: replying to the council
+
+A result is not the end of the conversation. The **Reply to the council** box
+takes statements the candidate wants to make — things left off the CV, things
+the council read wrongly — and re-runs the assessment with them in view.
+
+Three design decisions hold it together:
+
+**Claims never become evidence.** They are numbered in their own namespace
+(`C01`, `C02` …) and rendered under a heading that tells the models exactly
+what they are: unverified assertions, not lines from the CV. The integrity
+guarantee — that `[E07]` points at text the candidate actually wrote — would be
+destroyed if a claim could be cited as evidence, so a requirement supported
+*only* by claims is capped: it can never be judged `direct`, its confidence is
+capped at 0.55, and the verdict carries `from_claim: true`, which the UI shows
+as "on your word" rather than "from the CV".
+
+**The rubric is reused, not regenerated.** A re-scan reconstructs the previous
+run's `RoleProfile` — requirements, criticalities and dimension weights — and
+skips job analysis entirely. This is not only faster: if the job were
+re-decomposed, the requirements could come back different and any movement in
+the score would be unattributable. You could not tell whether the candidate's
+reply changed something or the ruler had changed.
+
+**The benchmark lives in the browser.** The service keeps nothing between
+requests, so there is nowhere on the server for the previous result to live.
+The client posts it back with the reply. It sends only the fields the delta
+needs — the full result carries the evidence index, which is the CV text, and
+there is no reason to put that back on the wire.
+
+The result then carries a `delta`: the change in score, match and verdict, plus
+every requirement whose coverage moved, each marked according to whether it
+moved on evidence or on the candidate's word.
+
+> A bug worth recording: the first version of the benchmark payload carried the
+> requirements but not the `dimension_weights`. The reconstructed role had an
+> empty weight vector, the weighted sum divided a zero numerator by a fallback
+> denominator, and a re-scan returned a confident **0.0** for a candidate the
+> council had just scored 85.8. Fixed at both ends — the client now sends the
+> whole rubric, and `overall_score` treats an all-zero weight vector as "weight
+> them equally" instead of dividing through. `test_zero_weight_guard` covers it.
 
 ### `council/aggregate.py`
 Stage 5a: all the scoring mathematics, and no model calls.
