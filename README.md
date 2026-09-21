@@ -11,6 +11,18 @@ both.
 Everything runs on local open-weight models. A submitted CV never leaves the
 machine and is never written to disk.
 
+## Try it
+
+**→ https://haven.taila6d3cb.ts.net/council/**
+
+Paste a job description and a CV; the council assesses it in about five to
+seven minutes, streaming each assessor's progress while you wait. Nothing you
+paste is stored.
+
+It is served from a single Mac over a Tailscale Funnel rather than cloud
+infrastructure, so if the link does not resolve, that machine is asleep — it
+is not an outage. Run it yourself with the instructions below.
+
 ## What makes the matching dynamic
 
 The thing this is built to avoid is keyword matching, which fails in both
