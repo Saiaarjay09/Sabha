@@ -10,8 +10,11 @@ Order matters and is the argument for the whole design:
      requirement verdicts, and argues about the candidate as a whole.
   5. Aggregate with bias correction, then synthesise concrete fixes.
 
-Nothing is written to disk at any point. The CV exists in memory for the life
-of the request and is discarded when it returns.
+No CV is written to disk at any point. It exists in memory for the life of the
+request and is discarded when it returns. The one thing this module does
+persist is a row of stage timings per run — durations and counts only, never
+content — so that optimisation can target the stage that actually dominates.
+See council/timings.py for exactly what that row contains and does not.
 """
 
 from __future__ import annotations
@@ -20,7 +23,7 @@ import asyncio
 import time
 from typing import Awaitable, Callable
 
-from council import aggregate, atsaudit, evidence, jd, match
+from council import aggregate, atsaudit, evidence, jd, match, timings
 from council.config import settings
 from council.personas import BY_NAME, COUNCIL, Member, system_prompt
 from council.providers import Ollama
@@ -302,6 +305,7 @@ async def run(
     t0 = time.perf_counter()
     llm = Ollama()
     notes: list[str] = []
+    timer = timings.RunTimer()
 
     async def say(msg: str, data: dict | None = None):
         if progress:
@@ -313,19 +317,22 @@ async def run(
 
     # 1. the job, before the CV
     await say("Reading the job and working out what it actually requires")
-    role, note = await jd.analyse_job(llm, job_title, jd_text)
+    with timer.stage("job_analysis"):
+        role, note = await jd.analyse_job(llm, job_title, jd_text)
     if note:
         notes.append(note)
     await say(f"Identified {len(role.requirements)} real requirements", {"role": role.model_dump()})
 
     # 2. the CV, indexed mechanically
-    units = evidence.index_cv(ats_cv if ats_cv.strip() else exec_cv)
-    ats = atsaudit.audit(ats_cv if ats_cv.strip() else exec_cv, source)
+    with timer.stage("cv_indexing"):
+        units = evidence.index_cv(ats_cv if ats_cv.strip() else exec_cv)
+        ats = atsaudit.audit(ats_cv if ats_cv.strip() else exec_cv, source)
     await say(f"Indexed {len(units)} pieces of evidence from the CV")
     ev_block = evidence.render(units)
 
     # 3. requirement-by-requirement judgement
-    verdicts, mnotes = await match.match_requirements(llm, role, units, lambda m: say(m))
+    with timer.stage("requirement_matching"):
+        verdicts, mnotes = await match.match_requirements(llm, role, units, lambda m: say(m))
     notes += mnotes
     await say("Requirement matching complete", {"verdicts": [v.model_dump() for v in verdicts]})
 
@@ -354,11 +361,12 @@ async def run(
 
     members: list[MemberScore] = list(unavailable)
     # Busiest model first: it loads once and serves the most members.
-    for model, group in sorted(groups.items(), key=lambda kv: -len(kv[1])):
-        members += list(await asyncio.gather(*[
-            _run_member(llm, m, model, role, ev_block, req_summary, ats_cv, exec_cv, sem, progress)
-            for m in group
-        ]))
+    with timer.stage("council"):
+        for model, group in sorted(groups.items(), key=lambda kv: -len(kv[1])):
+            members += list(await asyncio.gather(*[
+                _run_member(llm, m, model, role, ev_block, req_summary, ats_cv, exec_cv, sem, progress)
+                for m in group
+            ]))
 
     # Second pass: rescue members that failed.
     #
@@ -375,11 +383,12 @@ async def run(
     if failed and proven:
         rescue_model = max(set(proven), key=proven.count)
         await say(f"Retrying {len(failed)} member(s) that timed out, on {rescue_model}")
-        retried = list(await asyncio.gather(*[
-            _run_member(llm, BY_NAME[ms.member], rescue_model, role, ev_block, req_summary,
-                        ats_cv, exec_cv, sem, progress)
-            for ms in failed if ms.member in BY_NAME
-        ]))
+        with timer.stage("rescue"):
+            retried = list(await asyncio.gather(*[
+                _run_member(llm, BY_NAME[ms.member], rescue_model, role, ev_block, req_summary,
+                            ats_cv, exec_cv, sem, progress)
+                for ms in failed if ms.member in BY_NAME
+            ]))
         recovered = 0
         by_name = {ms.member: ms for ms in members}
         for r in retried:
@@ -411,7 +420,14 @@ async def run(
         notes.append(f"Requirement coverage was {raw_match:.0f}% but is capped at {match_pct:.0f}% because a must-have is unevidenced.")
 
     await say("Aggregating the panel and writing your improvements")
-    summary, improvements = await _synthesise(llm, role, verdicts, members, ats, ev_block)
+    with timer.stage("synthesis"):
+        summary, improvements = await _synthesise(llm, role, verdicts, members, ats, ev_block)
+
+    for ms in members:
+        timer.member(ms.member, ms.model, ms.latency_s, ms.ok)
+    timer.count(requirements=len(role.requirements), evidence=len(units),
+                members_ok=len(ok), members_total=len(members))
+    timer.record()
 
     return CouncilResult(
         score=score,

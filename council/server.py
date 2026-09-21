@@ -4,7 +4,9 @@ Deployed on a Tailscale Funnel, which means anyone with the link can reach it.
 Two consequences shape this file: the guards (size caps, a per-IP rate limit, a
 ceiling on concurrent runs so one visitor cannot monopolise the machine's GPU),
 and the storage policy — a submitted CV lives in memory for the duration of its
-run and is deleted when the result is delivered. Nothing touches disk.
+run and is deleted when the result is delivered. No submitted content touches
+disk; the only file the service writes is the timing log (durations and counts,
+never content — see council/timings.py).
 """
 
 from __future__ import annotations

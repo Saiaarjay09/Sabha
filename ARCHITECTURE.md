@@ -11,10 +11,15 @@ It is written to be read start to finish by someone who has never seen the code.
 
 **https://haven.taila6d3cb.ts.net/council/**
 
-Paste a job description and a CV and the council will assess it. Expect it to
-take five to seven minutes: seven assessors and a two-model matching pass all
-run locally on the machine serving the page, and the page streams their
-progress while you wait.
+Paste a job description and a CV and the council will assess it. Seven
+assessors and a two-model matching pass all run locally on the machine serving
+the page.
+
+Runtime varies more than a single figure suggests: about **6–8 minutes** when
+the models are already resident, and longer — occasionally past fifteen — when
+a model has to load first, a member times out and is retried, or something else
+is using the GPU. The page streams each assessor's progress so the wait is
+legible rather than a blank spinner.
 
 Two things worth knowing before you click:
 
@@ -151,6 +156,8 @@ moment the run ends.
 | `council/server.py` | FastAPI app, SSE streaming, public-deployment guards |
 | `council/static/*` | The single-page front end |
 | `deploy/*` | launchd service + install script |
+| `council/timings.py` | The per-run timing record — durations and counts only |
+| `analyse_timings.py` | Summarises that record: where the time actually goes |
 | `test_council.py` | 57 checks over every deterministic component |
 
 ---
@@ -518,6 +525,32 @@ own location, substitutes those into the plist template, bootstraps the service,
 Ollama is registered as a login item and warns if not — otherwise the site
 returns errors after a reboot.
 
+### `council/timings.py`
+The only thing the service writes to disk, and deliberately narrow. Each run
+appends one JSON line: total wall time, a duration per stage (`job_analysis`,
+`cv_indexing`, `requirement_matching`, `council`, `rescue`, `synthesis`), each
+member's latency and which model served it, and the small structural counts
+needed to interpret those numbers — how many requirements, how many evidence
+units, how many members answered.
+
+It records **no** CV text, job text, job title, filename, score, verdict, IP
+address or run id. A leaked copy would tell you how slow the machine is and
+nothing about who used it. Writing is wrapped so that a failure to log can
+never fail somebody's analysis, and the file lives outside the repository
+(`~/Library/Logs/Sabha/timings.jsonl` by default). Set `COUNCIL_TIMINGS=0` to
+turn it off entirely.
+
+`RunTimer.stage()` accumulates rather than overwrites, so a stage entered twice
+— the rescue pass re-running members — reports the total cost rather than only
+the last attempt.
+
+### `analyse_timings.py`
+Reads that log and prints where a run's time goes: median and p90 total, a
+share-of-runtime bar per stage, median latency per model and per member, and a
+warning when runs lost members. Run it with `python3 analyse_timings.py`. This
+is what optimisation should be argued from — the stage that dominates is not
+always the one that feels slow.
+
 ### `test_council.py`
 57 checks over every deterministic component, run with `python3 test_council.py`
 (no pytest dependency). Covers JSON salvage from malformed model output, ATS
@@ -537,14 +570,16 @@ are the parts that decide what the candidate is actually told.
 All environment variables are prefixed `COUNCIL_`:
 
 `OLLAMA_HOST`, `CONCURRENCY`, `TIMEOUT`, `MEMBER_TIMEOUT`, `MAX_CHARS_CV`,
-`MAX_CHARS_JD`, `MAX_UPLOAD_BYTES`, `RATE_LIMIT_PER_HOUR`, `ROOT_PATH`, `PORT`.
+`MAX_CHARS_JD`, `MAX_UPLOAD_BYTES`, `RATE_LIMIT_PER_HOUR`, `ROOT_PATH`, `PORT`,
+`TIMINGS` (`0` disables the timing log), `TIMINGS_PATH`.
 
 ---
 
 ## 7. Known limitations
 
-- **It is slow**: 5–7 minutes per analysis, inherent to seven local agents plus
-  two-model matching. The page streams progress so the wait is legible.
+- **It is slow**: 6–8 minutes with models resident, longer on a cold start or
+  after a retry. Every run appends its stage timings to a local log (see
+  `council/timings.py`); `analyse_timings.py` summarises where the time went.
 - **The offsets are declared, not learned.** Nothing tells this system who
   actually got hired, so there is no ground truth to calibrate against. They
   encode the lean each role was designed to have and are tuning parameters.

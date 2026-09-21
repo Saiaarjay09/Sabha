@@ -15,9 +15,13 @@ machine and is never written to disk.
 
 **→ https://haven.taila6d3cb.ts.net/council/**
 
-Paste a job description and a CV; the council assesses it in about five to
-seven minutes, streaming each assessor's progress while you wait. Nothing you
-paste is stored.
+Paste a job description and a CV. Nothing you paste is stored.
+
+Runtime varies more than a single figure suggests: about **6–8 minutes** when
+the models are already resident, and longer — occasionally past fifteen — when
+a model has to load first, a member times out and is retried, or something else
+is using the GPU. The page streams each assessor's progress so the wait is
+legible rather than a blank spinner.
 
 It is served from a single Mac over a Tailscale Funnel rather than cloud
 infrastructure, so if the link does not resolve, that machine is asleep — it
