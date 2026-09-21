@@ -132,7 +132,13 @@ async def analyse_job(llm: Ollama, job_title: str, jd_text: str) -> tuple[RolePr
         _SYSTEM,
         _TEMPLATE.format(job_title=job_title or "(not stated)", jd=jd_text.strip() or "(none supplied)"),
         model,
-        temperature=0.2,
+        # Zero, not 0.2. This step decides how many requirements exist and
+        # which are "must" — and a single must/strong flip changes whether the
+        # must-have gate fires, which moves the headline match by more than
+        # ten points. Measured on one job description, repeated runs produced
+        # five must-haves one time and six the next, so the same CV scored 78%
+        # and then 65%. The rubric has to be the stable part.
+        temperature=0.0,
         max_tokens=2600,
     )
     if not isinstance(data, dict) or not data.get("requirements"):

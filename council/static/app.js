@@ -54,6 +54,15 @@ const REC = {
 
 function band(v) { return v >= 70 ? 'good' : v >= 50 ? 'warn' : 'bad'; }
 
+/* Uncapped requirement coverage, recovered from the run note the server
+   writes when the must-have gate fires. Showing only the gated number makes a
+   strong candidate with one gap look the same as a weak one. */
+function rawCoverage(r) {
+  const note = (r.notes || []).find(n => /coverage was/i.test(n));
+  const m = note && note.match(/coverage was ([\d.]+)%/i);
+  return m ? parseFloat(m[1]) : r.match_pct;
+}
+
 /* A ring gauge, drawn inline — no chart library, and it reads correctly in
    both themes because it inherits currentColor from its band class. */
 function ring(value, size = 118) {
@@ -89,7 +98,10 @@ function render(r) {
     <div class="score-card">
       <div class="label">Requirement match</div>
       ${ring(r.match_pct)}
-      <div class="sub">${esc(r.match_pct)}% of what this job needs, weighted by how badly it needs it</div>
+      <div class="sub">${esc(r.match_pct)}% of what this job needs, weighted by how badly it needs it${
+        r.blocking_gaps?.length
+          ? ` — held down from ${Math.round(rawCoverage(r))}% because a must-have is unevidenced`
+          : ''}</div>
     </div>
   </div>
 

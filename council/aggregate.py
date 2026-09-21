@@ -166,12 +166,20 @@ def match_percentage(
 
     # The gate. One unmet must-have means this is not a strong match however
     # well the rest scored; two or more means it is a weak one.
-    if len(missing_musts) == 1:
-        capped = min(raw, 65.0)
-    elif len(missing_musts) >= 2:
-        capped = min(raw, 45.0 - 3.0 * (len(missing_musts) - 2))
-    else:
+    #
+    # The ceiling is approached, not clamped to. A hard `min()` flattened every
+    # gated run to exactly 65.0, which made the headline both uninformative and
+    # alarming: a candidate covering 90% of everything else read identically to
+    # one covering 70%, and a single must/strong reclassification between runs
+    # swung the number 13 points onto that plateau. Keeping a third of the
+    # excess preserves the point — a missing must-have dominates — while the
+    # number still discriminates and still moves monotonically with coverage.
+    n = len(missing_musts)
+    if n == 0:
         capped = raw
+    else:
+        ceiling = 65.0 if n == 1 else max(25.0, 45.0 - 3.0 * (n - 2))
+        capped = ceiling + (raw - ceiling) * 0.3 if raw > ceiling else raw
     return round(_clamp(capped), 1), missing_musts, raw
 
 

@@ -248,7 +248,7 @@ async def match_requirements(
         m2 = None
         notes.append("Only one model family installed, so requirement matching had no second opinion.")
 
-    tasks = [_judge_chunk(llm, m1, role, evidence_block, ch, ids, 0.15, claim_ids) for ch in chunks]
+    tasks = [_judge_chunk(llm, m1, role, evidence_block, ch, ids, 0.0, claim_ids) for ch in chunks]
     if m2:
         tasks += [_judge_chunk(llm, m2, role, evidence_block, ch, ids, 0.3, claim_ids) for ch in chunks]
 

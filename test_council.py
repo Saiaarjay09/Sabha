@@ -211,6 +211,35 @@ def test_ats_compliance():
     check("every check declares criticality", all("critical" in c for c in clean.checks))
 
 
+def test_gate_has_no_plateau():
+    """A gated match must still discriminate.
+
+    Regression: the gate used a hard min(), so every run with one unevidenced
+    must-have reported exactly 65.0 regardless of how much else was covered.
+    That made the headline uninformative, and because a single must/strong
+    reclassification between runs flips the gate, the same CV could read 78%
+    then 65% with nothing changed.
+    """
+    print("\nGate has no plateau")
+
+    def m(cov, crit):
+        reqs = [Requirement(id=f"R{i:02d}", text=f"r{i}", criticality=c)
+                for i, c in enumerate(crit, 1)]
+        vs = [RequirementVerdict(requirement_id=r.id, coverage=c, confidence=0.9)
+              for r, c in zip(reqs, cov)]
+        return match_percentage(reqs, vs)
+
+    crit = ["must"] + ["strong"] * 5
+    strong, _, raw_s = m(["absent"] + ["direct"] * 5, crit)
+    weak, _, raw_w = m(["absent"] + ["weak"] * 5, crit)
+    check("a gated run still beats a worse gated run", strong > weak, f"{strong} vs {weak}")
+    check("the gate still bites hard", strong < raw_s, f"{strong} vs raw {raw_s}")
+    check("no flat 65.0 plateau", strong != 65.0 or weak != 65.0)
+    mid, _, _ = m(["absent"] + ["direct"] * 3 + ["weak"] * 2, crit)
+    check("and it is monotonic in coverage", weak <= mid <= strong, f"{weak} / {mid} / {strong}")
+    check("an ungated run is never penalised", m(["direct"] * 6, crit)[0] == 100.0)
+
+
 def test_labels():
     print("\nVerdict and confidence labels")
     check("strong", verdict_label(85, 85, 0) == "strong fit")
@@ -240,7 +269,8 @@ def test_weights():
 def main():
     for t in (test_json_salvage, test_ats_discriminates, test_evidence_is_verbatim,
               test_bias_correction, test_outlier_damping, test_match_gate,
-              test_zero_weight_guard, test_ats_compliance, test_labels, test_weights):
+              test_zero_weight_guard, test_ats_compliance, test_gate_has_no_plateau,
+              test_labels, test_weights):
         t()
     print(f"\n{'FAILED: ' + ', '.join(FAILS) if FAILS else 'All checks passed.'}")
     return 1 if FAILS else 0
